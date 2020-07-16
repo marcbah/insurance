@@ -1,0 +1,115 @@
+import java.text.SimpleDateFormat
+
+buildscript {
+  repositories {
+    maven {
+      url "https://plugins.gradle.org/m2/"
+    }
+  }
+  dependencies {
+    classpath "gradle.plugin.com.palantir.gradle.docker:gradle-docker:0.20.1"
+  }
+}
+
+apply plugin: "com.palantir.docker"
+
+version '0.0.1'
+
+task cleanNodeModules(type: Delete) {
+  delete 'node_modules', 'package-lock.json'
+}
+
+task npmDeepInstall(type: Exec) {
+  inputs.dir("../libs")
+    .withPropertyName("libs")
+    .withPathSensitivity(PathSensitivity.RELATIVE)
+
+  inputs.files("package.json", "package-lock.json")
+    .withPropertyName("configFiles")
+    .withPathSensitivity(PathSensitivity.RELATIVE)
+
+  outputs.dir("node_modules")
+    .withPropertyName("node_modules")
+
+  commandLine 'npm', 'run', 'deep-install'
+}
+
+task runBuild(type: Exec) {
+  inputs.files(fileTree('node_modules'))
+  inputs.files(fileTree('src'))
+  inputs.files(fileTree('public'))
+  inputs.file('package.json')
+  inputs.file('webpack.config.js')
+
+  outputs.dir("dist")
+    .withPropertyName("dist")
+
+  commandLine 'npm', 'run', 'build'
+}
+
+task start(type: Exec) {
+  commandLine 'npm', 'run', 'start'
+}
+
+task copyWwwFiles(type: Copy) {
+  from(".") {
+    include 'dist/**'
+    include 'nginx.conf'
+  }
+  into "$buildDir/www"
+
+  includeEmptyDirs = false
+}
+
+docker {
+  def suffix = ''
+  def app_version = '0.0.0'
+  def build_url = 'None'
+  def build_revision = 'None'
+  def build_date = "${new SimpleDateFormat('dd-MM-yyyy').format(new Date())}"
+  def build_time = "${new SimpleDateFormat('HH:mm:ss').format(new Date())}"
+  def environment = 'Debug'
+  def company = 'Saint-Raphael Technologie'
+  def whoami = 'Data Service'
+  if ( project.hasProperty('av') ) {
+      suffix = ':' + av
+      app_version = av
+  }
+  if ( project.hasProperty('bu') ) {
+      build_url = bu
+  }
+
+  new File(project.rootDir, "build/shields.io/${app_version}").mkdirs()
+
+  new File(project.rootDir, "build/shields.io/${app_version}/bo_insurance_version.json").text = """
+{
+  "schemaVersion": 1,
+  "label": "Version",
+  "message": "${app_version}",
+  "color": "blue"
+}
+"""
+
+    new File(project.rootDir, "build/shields.io/${app_version}/bo_insurance_build_time.json").text = """
+{
+  "schemaVersion": 1,
+  "label": "Build Time",
+  "message": "${build_date} ${build_time}",
+  "color": "blue"
+}
+"""
+
+    new File(project.rootDir, "build/shields.io/${app_version}/bo_insurance_build_url.json").text = """
+{
+  "schemaVersion": 1,
+  "label": "Build URL",
+  "message": "${build_url}",
+  "color": "blue"
+}
+"""
+  name "srt/bo-insurance" + suffix
+  copySpec.from(copyWwwFiles.outputs).into("www")
+  buildArgs([ 'WWW_DIR': "www/dist", "NGINX_CONFIG": "www/nginx.conf" ])
+}
+
+docker.dependsOn copyWwwFiles
